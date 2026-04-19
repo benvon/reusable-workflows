@@ -1,0 +1,149 @@
+name: release-policy
+
+on:
+  workflow_call:
+    inputs:
+      base_branch:
+        required: false
+        type: string
+        default: main
+      pull_request_number:
+        required: true
+        type: number
+
+jobs:
+  release-policy:
+    name: release-policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Validate title and sync release label
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const prNumber = Number(${{ inputs.pull_request_number }});
+            const baseBranch = ${{ toJSON(inputs.base_branch) }};
+            const releaseLabels = {
+              "release:major": {
+                color: "B60205",
+                description: "Create a major release from the next merge to the default release branch."
+              },
+              "release:minor": {
+                color: "D93F0B",
+                description: "Create a minor release from the next merge to the default release branch."
+              },
+              "release:patch": {
+                color: "FBCA04",
+                description: "Create a patch release from the next merge to the default release branch."
+              },
+              "release:none": {
+                color: "6A737D",
+                description: "Skip automated semver release creation for this pull request."
+              },
+              "release:skip": {
+                color: "5319E7",
+                description: "Explicitly skip automated release creation for this pull request."
+              }
+            };
+            const conventionalCommit =
+              /^(?<type>build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\((?<scope>[^()\r\n]+)\))?(?<breaking>!)?: (?<description>\S.*)$/;
+
+            async function ensureLabel(name) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                  color: releaseLabels[name].color,
+                  description: releaseLabels[name].description,
+                });
+              }
+            }
+
+            async function removeReleaseLabels(currentLabels) {
+              for (const name of currentLabels) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: prNumber,
+                    name,
+                  });
+                } catch (error) {
+                  if (error.status !== 404) {
+                    throw error;
+                  }
+                }
+              }
+            }
+
+            for (const name of Object.keys(releaseLabels)) {
+              await ensureLabel(name);
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const currentReleaseLabels = pr.labels
+              .map((label) => typeof label === "string" ? label : label.name)
+              .filter((name) => Object.prototype.hasOwnProperty.call(releaseLabels, name));
+
+            if (pr.base.ref !== baseBranch) {
+              await removeReleaseLabels(currentReleaseLabels);
+              core.notice(
+                `PR #${pr.number} targets ${pr.base.ref}; release labels only apply to ${baseBranch}.`,
+              );
+              return;
+            }
+
+            const title = pr.title.trim();
+            const match = title.match(conventionalCommit);
+
+            if (!match || !match.groups) {
+              await removeReleaseLabels(currentReleaseLabels);
+              core.setFailed(
+                "PR title must follow Conventional Commits, for example `feat(api): add retries`, `fix: handle timeout`, or `chore!: drop legacy mode`.",
+              );
+              return;
+            }
+
+            const type = match.groups.type;
+            const breaking = match.groups.breaking === "!";
+
+            let desiredLabel = "release:none";
+            if (breaking) {
+              desiredLabel = "release:major";
+            } else if (type === "feat") {
+              desiredLabel = "release:minor";
+            } else if (["fix", "perf", "revert"].includes(type)) {
+              desiredLabel = "release:patch";
+            }
+
+            const labelsToRemove = currentReleaseLabels.filter((name) => name !== desiredLabel);
+            await removeReleaseLabels(labelsToRemove);
+
+            if (!currentReleaseLabels.includes(desiredLabel)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: [desiredLabel],
+              });
+            }
+
+            core.notice(`PR #${pr.number} title '${title}' maps to ${desiredLabel}.`);

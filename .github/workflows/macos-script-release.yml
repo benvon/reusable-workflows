@@ -1,0 +1,48 @@
+name: macos-script-release
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        required: false
+        type: string
+        default: .
+      build_command:
+        required: true
+        type: string
+      artifact_globs:
+        required: true
+        type: string
+
+jobs:
+  release:
+    name: release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Build release artifacts
+        shell: bash
+        run: ${{ inputs.build_command }}
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ github.ref_name }}
+          path: ${{ inputs.working_directory }}/${{ inputs.artifact_globs }}
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: ${{ inputs.working_directory }}/${{ inputs.artifact_globs }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}

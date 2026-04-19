@@ -1,0 +1,195 @@
+name: release-tag
+
+on:
+  workflow_call:
+    inputs:
+      base_branch:
+        required: false
+        type: string
+        default: main
+      caller_event_name:
+        required: true
+        type: string
+      caller_sha:
+        required: true
+        type: string
+      manual_release_type:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  release-tag:
+    name: release-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Resolve release signal
+        id: signal
+        uses: actions/github-script@v8
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          CALLER_EVENT_NAME: ${{ inputs.caller_event_name }}
+          CALLER_SHA: ${{ inputs.caller_sha }}
+          MANUAL_RELEASE_TYPE: ${{ inputs.manual_release_type }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const labelsToBump = {
+              "release:major": "major",
+              "release:minor": "minor",
+              "release:patch": "patch",
+            };
+            const skipLabels = new Set(["release:none", "release:skip"]);
+            const eventName = process.env.CALLER_EVENT_NAME;
+            const sha = process.env.CALLER_SHA;
+            const baseBranch = process.env.BASE_BRANCH;
+            let bump = (process.env.MANUAL_RELEASE_TYPE || "").trim();
+            let source = "";
+
+            if (eventName === "push") {
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: sha,
+              });
+
+              const mergedPr = prs.find((pr) => pr.merged_at && pr.base.ref === baseBranch);
+              if (!mergedPr) {
+                core.notice(`No merged pull request is associated with ${sha}; skipping release.`);
+                core.setOutput("should_release", "false");
+                return;
+              }
+
+              const labels = mergedPr.labels.map((label) =>
+                typeof label === "string" ? label : label.name,
+              );
+              const matched = labels.filter((name) => Object.prototype.hasOwnProperty.call(labelsToBump, name));
+              const skips = labels.filter((name) => skipLabels.has(name));
+
+              if (matched.length > 1) {
+                core.setFailed(`PR #${mergedPr.number} has multiple release labels: ${matched.join(", ")}`);
+                return;
+              }
+
+              if (skips.length > 0 && matched.length > 0) {
+                core.setFailed(`PR #${mergedPr.number} mixes skip and release labels: ${[...skips, ...matched].join(", ")}`);
+                return;
+              }
+
+              if (skips.length > 0) {
+                core.notice(`PR #${mergedPr.number} has ${skips.join(", ")}; skipping release.`);
+                core.setOutput("should_release", "false");
+                return;
+              }
+
+              if (matched.length === 0) {
+                core.notice(`PR #${mergedPr.number} is missing a release label; skipping release.`);
+                core.setOutput("should_release", "false");
+                return;
+              }
+
+              bump = labelsToBump[matched[0]];
+              source = `PR #${mergedPr.number} label ${matched[0]}`;
+              core.setOutput("pr_number", String(mergedPr.number));
+              core.setOutput("pr_title", mergedPr.title);
+            } else if (eventName === "workflow_dispatch") {
+              if (!["major", "minor", "patch"].includes(bump)) {
+                core.setFailed(`Manual release_type must be one of major, minor, or patch. Received: '${bump}'.`);
+                return;
+              }
+              source = `workflow_dispatch input ${bump}`;
+            } else {
+              core.notice(`Unsupported caller event '${eventName}'; skipping release.`);
+              core.setOutput("should_release", "false");
+              return;
+            }
+
+            core.setOutput("should_release", "true");
+            core.setOutput("bump", bump);
+            core.setOutput("source", source);
+
+      - name: Skip release when no release label is present
+        if: steps.signal.outputs.should_release != 'true'
+        run: echo "No release action taken for this run." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Determine release tag
+        if: steps.signal.outputs.should_release == 'true'
+        id: version
+        env:
+          RELEASE_SHA: ${{ inputs.caller_sha }}
+          RELEASE_BUMP: ${{ steps.signal.outputs.bump }}
+          RELEASE_SOURCE: ${{ steps.signal.outputs.source }}
+        run: |
+          set -euo pipefail
+
+          existing_tag="$(git tag --points-at "$RELEASE_SHA" 'v*' | sort -V | tail -n1)"
+          if [[ -n "$existing_tag" ]]; then
+            echo "tag=$existing_tag" >> "$GITHUB_OUTPUT"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "Using existing tag $existing_tag for $RELEASE_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          latest_tag="$(git tag --list 'v*' --sort=-version:refname | head -n1)"
+          if [[ -z "$latest_tag" ]]; then
+            latest_tag="v0.0.0"
+          fi
+
+          version="${latest_tag#v}"
+          IFS=. read -r major minor patch <<< "$version"
+
+          case "$RELEASE_BUMP" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+            *)
+              echo "Unsupported release bump: $RELEASE_BUMP" >&2
+              exit 1
+              ;;
+          esac
+
+          next_tag="v${major}.${minor}.${patch}"
+          if git rev-parse -q --verify "refs/tags/$next_tag" >/dev/null; then
+            echo "Tag $next_tag already exists" >&2
+            exit 1
+          fi
+
+          echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "Release source: $RELEASE_SOURCE"
+            echo "Next tag: $next_tag"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create release tag
+        if: steps.signal.outputs.should_release == 'true' && steps.version.outputs.created == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_SHA: ${{ inputs.caller_sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$RELEASE_TAG" "$RELEASE_SHA"
+          git push origin "$RELEASE_TAG"
