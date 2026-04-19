@@ -89,19 +89,6 @@ jobs:
             printf '%s\n' "$2"
           }
 
-          install_binary_release() {
-            local name="$1"
-            local version="$2"
-            local script_url="$3"
-
-            if [[ -z "${version}" ]]; then
-              return 0
-            fi
-
-            echo "Installing ${name} ${version}"
-            curl -sSfL "${script_url}" | sh -s -- -b "$(go env GOPATH)/bin" "v${version#v}"
-          }
-
           install_go_tool() {
             local name="$1"
             local version="$2"
@@ -121,7 +108,7 @@ jobs:
           goimports_version="$(version_from_file goimports || true)"
           staticcheck_version="$(version_from_file staticcheck || true)"
 
-          install_binary_release "golangci-lint" "${golangci_lint_version}" "https://golangci-lint.run/install.sh"
+          install_go_tool "golangci-lint" "${golangci_lint_version}" "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
           install_go_tool "gosec" "${gosec_version}" "github.com/securego/gosec/v2/cmd/gosec"
           install_go_tool "govulncheck" "${govulncheck_version}" "golang.org/x/vuln/cmd/govulncheck"
           install_go_tool "goimports" "${goimports_version}" "golang.org/x/tools/cmd/goimports"
