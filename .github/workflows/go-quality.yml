@@ -7,14 +7,30 @@ on:
         required: false
         type: string
         default: go.mod
-      tool_versions_file:
-        required: false
-        type: string
-        default: .tool-versions
       working_directory:
         required: false
         type: string
         default: .
+      golangci_lint_version:
+        required: false
+        type: string
+        default: 2.8.0
+      gosec_version:
+        required: false
+        type: string
+        default: 2.22.11
+      govulncheck_version:
+        required: false
+        type: string
+        default: 1.1.4
+      goimports_version:
+        required: false
+        type: string
+        default: 0.40.0
+      staticcheck_version:
+        required: false
+        type: string
+        default: 0.6.0
       quality_command:
         required: true
         type: string
@@ -56,38 +72,9 @@ jobs:
           cache-dependency-path: ${{ inputs.working_directory }}/go.sum
 
       - name: Install pinned CI helper tools
-        env:
-          TOOL_VERSIONS_FILE: ${{ inputs.tool_versions_file }}
         shell: bash
         run: |
           set -euo pipefail
-
-          version_from_file() {
-            local tool="$1"
-            local line
-
-            if [[ ! -f "${TOOL_VERSIONS_FILE}" ]]; then
-              return 1
-            fi
-
-            line="$(awk -v tool="${tool}" '$1 == tool { print; exit }' "${TOOL_VERSIONS_FILE}")"
-            if [[ -z "${line}" ]]; then
-              return 1
-            fi
-
-            line="${line%%#*}"
-            line="$(echo "${line}" | xargs)"
-            if [[ -z "${line}" ]]; then
-              return 1
-            fi
-
-            set -- ${line}
-            if [[ $# -lt 2 ]]; then
-              return 1
-            fi
-
-            printf '%s\n' "$2"
-          }
 
           install_go_tool() {
             local name="$1"
@@ -102,17 +89,11 @@ jobs:
             go install "${module}@v${version#v}"
           }
 
-          golangci_lint_version="$(version_from_file golangci-lint || true)"
-          gosec_version="$(version_from_file gosec || true)"
-          govulncheck_version="$(version_from_file govulncheck || true)"
-          goimports_version="$(version_from_file goimports || true)"
-          staticcheck_version="$(version_from_file staticcheck || true)"
-
-          install_go_tool "golangci-lint" "${golangci_lint_version}" "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
-          install_go_tool "gosec" "${gosec_version}" "github.com/securego/gosec/v2/cmd/gosec"
-          install_go_tool "govulncheck" "${govulncheck_version}" "golang.org/x/vuln/cmd/govulncheck"
-          install_go_tool "goimports" "${goimports_version}" "golang.org/x/tools/cmd/goimports"
-          install_go_tool "staticcheck" "${staticcheck_version}" "honnef.co/go/tools/cmd/staticcheck"
+          install_go_tool "golangci-lint" "${{ inputs.golangci_lint_version }}" "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
+          install_go_tool "gosec" "${{ inputs.gosec_version }}" "github.com/securego/gosec/v2/cmd/gosec"
+          install_go_tool "govulncheck" "${{ inputs.govulncheck_version }}" "golang.org/x/vuln/cmd/govulncheck"
+          install_go_tool "goimports" "${{ inputs.goimports_version }}" "golang.org/x/tools/cmd/goimports"
+          install_go_tool "staticcheck" "${{ inputs.staticcheck_version }}" "honnef.co/go/tools/cmd/staticcheck"
 
       - name: Add Go tool bin directory to PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
