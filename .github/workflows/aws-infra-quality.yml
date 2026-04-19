@@ -1,0 +1,25 @@
+name: aws-infra-quality
+
+on:
+  workflow_call:
+    inputs:
+      quality_command:
+        required: false
+        type: string
+        default: SKIP_PREFLIGHT=true make check && make test
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: CI setup
+        uses: ./.github/actions/ci-setup
+
+      - name: Run quality command
+        run: ${{ inputs.quality_command }}

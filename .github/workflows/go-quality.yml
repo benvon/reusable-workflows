@@ -1,0 +1,111 @@
+name: go-quality
+
+on:
+  workflow_call:
+    inputs:
+      go_version_file:
+        required: false
+        type: string
+        default: go.mod
+      working_directory:
+        required: false
+        type: string
+        default: .
+      golangci_lint_version:
+        required: false
+        type: string
+        default: 2.8.0
+      gosec_version:
+        required: false
+        type: string
+        default: 2.22.11
+      govulncheck_version:
+        required: false
+        type: string
+        default: 1.1.4
+      goimports_version:
+        required: false
+        type: string
+        default: 0.40.0
+      staticcheck_version:
+        required: false
+        type: string
+        default: 0.6.0
+      quality_command:
+        required: true
+        type: string
+      coverage_file:
+        required: false
+        type: string
+        default: ""
+      upload_codecov:
+        required: false
+        type: boolean
+        default: false
+      codecov_flags:
+        required: false
+        type: string
+        default: ""
+      codecov_name:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+          check-latest: true
+          cache: true
+          cache-dependency-path: ${{ inputs.working_directory }}/go.sum
+
+      - name: Install pinned CI helper tools
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          install_go_tool() {
+            local name="$1"
+            local version="$2"
+            local module="$3"
+
+            if [[ -z "${version}" ]]; then
+              return 0
+            fi
+
+            echo "Installing ${name} ${version}"
+            go install "${module}@v${version#v}"
+          }
+
+          install_go_tool "golangci-lint" "${{ inputs.golangci_lint_version }}" "github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
+          install_go_tool "gosec" "${{ inputs.gosec_version }}" "github.com/securego/gosec/v2/cmd/gosec"
+          install_go_tool "govulncheck" "${{ inputs.govulncheck_version }}" "golang.org/x/vuln/cmd/govulncheck"
+          install_go_tool "goimports" "${{ inputs.goimports_version }}" "golang.org/x/tools/cmd/goimports"
+          install_go_tool "staticcheck" "${{ inputs.staticcheck_version }}" "honnef.co/go/tools/cmd/staticcheck"
+
+      - name: Add Go tool bin directory to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Run quality command
+        run: ${{ inputs.quality_command }}
+
+      - name: Upload coverage to Codecov
+        if: inputs.upload_codecov && inputs.coverage_file != ''
+        uses: codecov/codecov-action@v6
+        with:
+          files: ${{ inputs.working_directory }}/${{ inputs.coverage_file }}
+          flags: ${{ inputs.codecov_flags }}
+          name: ${{ inputs.codecov_name }}

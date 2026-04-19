@@ -1,0 +1,61 @@
+name: docker-image-quality
+
+on:
+  workflow_call:
+    inputs:
+      build_context:
+        required: false
+        type: string
+        default: .
+      dockerfile:
+        required: false
+        type: string
+        default: Dockerfile
+      platforms:
+        required: false
+        type: string
+        default: linux/amd64
+      build_args:
+        required: false
+        type: string
+        default: ""
+      load_image:
+        required: false
+        type: boolean
+        default: false
+      image_tag:
+        required: false
+        type: string
+        default: local-ci:latest
+      test_command:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.build_context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: false
+          load: ${{ inputs.load_image }}
+          tags: ${{ inputs.image_tag }}
+          build-args: ${{ inputs.build_args }}
+
+      - name: Run image tests
+        if: inputs.test_command != ''
+        run: ${{ inputs.test_command }}

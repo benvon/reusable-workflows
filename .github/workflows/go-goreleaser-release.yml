@@ -1,0 +1,81 @@
+name: go-goreleaser-release
+
+on:
+  workflow_call:
+    inputs:
+      go_version_file:
+        required: false
+        type: string
+        default: go.mod
+      working_directory:
+        required: false
+        type: string
+        default: .
+      goreleaser_args:
+        required: false
+        type: string
+        default: release --clean
+      setup_qemu:
+        required: false
+        type: boolean
+        default: true
+      setup_buildx:
+        required: false
+        type: boolean
+        default: true
+      login_ghcr:
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ inputs.go_version_file }}
+          cache: true
+          cache-dependency-path: ${{ inputs.working_directory }}/go.sum
+
+      - name: Set up QEMU
+        if: inputs.setup_qemu
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: inputs.setup_buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        if: inputs.login_ghcr
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: ${{ inputs.goreleaser_args }}
+          workdir: ${{ inputs.working_directory }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

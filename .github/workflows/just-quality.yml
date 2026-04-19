@@ -1,0 +1,35 @@
+name: just-quality
+
+on:
+  workflow_call:
+    inputs:
+      quality_command:
+        required: false
+        type: string
+        default: make ci
+      working_directory:
+        required: false
+        type: string
+        default: .
+
+jobs:
+  quality:
+    name: quality
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install ripgrep
+        run: brew install ripgrep
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Run quality command
+        run: ${{ inputs.quality_command }}
