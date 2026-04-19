@@ -68,6 +68,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: ${{ inputs.go_version_file }}
+          check-latest: true
           cache: true
           cache-dependency-path: ${{ inputs.working_directory }}/go.sum
 
