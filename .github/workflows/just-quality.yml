@@ -25,6 +25,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Install ripgrep
+        run: brew install ripgrep
+
       - name: Install just
         uses: taiki-e/install-action@just
 
