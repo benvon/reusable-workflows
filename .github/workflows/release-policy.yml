@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Validate title and sync release label
         uses: actions/github-script@v8
