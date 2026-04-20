@@ -25,4 +25,4 @@ jobs:
     with:
       caller_event_name: ${{ github.event_name }}
       caller_sha: ${{ github.sha }}
-      manual_release_type: ${{ inputs.release_type || '' }}
+      manual_release_type: ${{ github.event.inputs.release_type || '' }}
