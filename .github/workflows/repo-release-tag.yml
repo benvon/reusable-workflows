@@ -26,3 +26,10 @@ jobs:
       caller_event_name: ${{ github.event_name }}
       caller_sha: ${{ github.sha }}
       manual_release_type: ${{ github.event.inputs.release_type || '' }}
+
+  publish-release:
+    needs: release-tag
+    if: needs.release-tag.outputs.should_release == 'true'
+    uses: ./.github/workflows/repo-publish-release.yml
+    with:
+      release_tag: ${{ needs.release-tag.outputs.tag }}

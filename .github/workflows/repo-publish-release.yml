@@ -1,6 +1,12 @@
 name: publish-release
 
 on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Existing tag to publish, supplied by the release-tag workflow.
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -14,18 +20,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create GitHub release
+        uses: actions/github-script@v8
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        with:
+          script: |
+            const repository = context.repo;
+            const tag = process.env.RELEASE_TAG;
 
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+            // Preserve --verify-tag behavior: never create a tag as a side effect.
+            await github.rest.git.getRef({ ...repository, ref: `tags/${tag}` });
 
-          gh release create "$RELEASE_TAG" \
-            --generate-notes \
-            --title "$RELEASE_TAG" \
-            --verify-tag
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({
+                ...repository,
+                tag,
+              });
+              core.notice(`Release ${tag} already exists: ${release.html_url}`);
+              return;
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+            }
+
+            const { data: release } = await github.rest.repos.createRelease({
+              ...repository,
+              tag_name: tag,
+              name: tag,
+              generate_release_notes: true,
+            });
+            core.notice(`Published ${release.html_url}`);

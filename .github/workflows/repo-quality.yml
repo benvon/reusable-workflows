@@ -17,8 +17,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Install workflow linters
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db  # v3
+        with:
+          version: 2026.11.2
+          tool_versions: |
+            actionlint 1.7.12
+            shellcheck 0.11.0
+
       - name: Run actionlint
-        uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d  # v1
+        run: actionlint
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -30,3 +38,6 @@ jobs:
 
       - name: Lint YAML
         run: yamllint .
+
+      - name: Run workflow regression tests
+        run: python -m unittest discover -s tests -v
