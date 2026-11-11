@@ -4,11 +4,14 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
 
 import yaml
+
+from git_fixtures import ReleaseRepository
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -110,22 +113,14 @@ class ReleaseHandoffTests(unittest.TestCase):
         }, {"CALLER_EVENT_NAME": "push", "CALLER_SHA": "target", "BASE_BRANCH": "main"})
         self.assertEqual(result["errors"], [])
         with tempfile.TemporaryDirectory() as directory:
-            def git(*args, input=None):
-                return subprocess.check_output(["git", *args], cwd=directory, input=input).decode().strip()
-
-            git("init", "-q")
-            baseline = git("hash-object", "-w", "--stdin", input=b"baseline")
-            target = git("hash-object", "-w", "--stdin", input=b"target")
-            git("update-ref", "refs/tags/v1.2.3", baseline)
+            repo = ReleaseRepository(directory)
+            baseline = repo.commit("baseline")
+            target = repo.commit("target", parent=baseline)
+            repo.tag("v1.2.3", baseline)
+            worker = repo.worker()
             for created in ("true", "false"):
-                output = Path(directory) / "output"
-                output.write_text("")
-                subprocess.run(["bash", "-e", "-o", "pipefail", "-c", version["run"]],
-                               cwd=directory, check=True, capture_output=True, text=True,
-                               env={**os.environ, "RELEASE_SHA": target, "RELEASE_BUMP": "patch",
-                                    "RELEASE_SOURCE": "fixture", "GITHUB_OUTPUT": str(output),
-                                    "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary")})
-                values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                allocation, values = repo.allocate(version["run"], worker, target)
+                self.assertEqual(allocation.returncode, 0, allocation.stderr)
                 context = {"steps": {"signal": {"outputs": result["outputs"]},
                                      "version": {"outputs": values}}, "inputs": {"caller_sha": target}}
                 job_values = {key: resolve_output(value, context) for key, value in job["outputs"].items()}
@@ -133,7 +128,6 @@ class ReleaseHandoffTests(unittest.TestCase):
                            for key, value in public.items()}
                 self.assertEqual(exposed, {"should_release": "true", "tag": "v1.2.4",
                                           "sha": target, "created": created})
-                git("update-ref", "refs/tags/v1.2.4", target)
 
     def test_skip_signal_prevents_dependent_publication(self):
         tagger = workflow("release-tag.yml")["jobs"]["release-tag"]
@@ -214,17 +208,30 @@ class LintGateTests(unittest.TestCase):
             "invalid-workflow": "on: push\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n        with:\n          unknown-input: true\n",
             "invalid-shell": "on: push\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo $unused\n",
         }
+        for name, settings in {
+            "valid-queue": "queue: max\n  cancel-in-progress: false",
+            "valid-single-queue": "queue: single\n  cancel-in-progress: true",
+            "invalid-queue-value": "queue: typo",
+            "invalid-queue-type": "queue: [max]",
+            "invalid-cancelling-queue": "queue: max\n  cancel-in-progress: true",
+            "invalid-concurrency-key": "queue: max\n  unexpected: true",
+        }.items():
+            fixtures[name] = "concurrency:\n  group: releases\n  " + settings + "\n" + fixtures["valid"]
+        fixtures["invalid-job-queue"] = fixtures["valid"].replace(
+            "    steps:", "    concurrency:\n      group: releases\n      queue: typo\n    steps:")
         with tempfile.TemporaryDirectory() as directory:
             subprocess.run(["git", "init", "-q", directory], check=True)
             workflows = Path(directory) / ".github/workflows"
             workflows.mkdir(parents=True)
+            if (ROOT / "scripts").exists():
+                shutil.copytree(ROOT / "scripts", Path(directory) / "scripts")
             path = workflows / "fixture.yml"
             for name, contents in fixtures.items():
                 with self.subTest(name=name):
                     path.write_text(contents)
                     result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", step["run"]],
                                             cwd=directory, capture_output=True, text=True)
-                    self.assertEqual(result.returncode == 0, name == "valid", result.stdout + result.stderr)
+                    self.assertEqual(result.returncode == 0, name.startswith("valid"), result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

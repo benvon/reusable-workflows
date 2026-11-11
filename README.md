@@ -57,11 +57,47 @@ own publisher to the same outputs. The Docker, GoReleaser, and macOS publishers
 still use the caller's ref; pass the resolved tag to an explicitly tag-aware
 publisher rather than invoking those workflows from a main-branch event.
 
+Stable release versions use canonical `vMAJOR.MINOR.PATCH` tags with numeric
+components and no leading zeroes. Prereleases (`v2.0.0-rc.1`), build-metadata
+variants (`v2.0.0+build.1`), and aliases (`v2`, `vnext`) are ignored for both
+version selection and retry detection. Annotated and lightweight stable tags
+are supported. With no stable tag, the baseline is `v0.0.0`.
+
+Versions form one repository-wide sequence, including stable tags on other
+branches. `base_branch` selects eligible PRs; it does not create a separate
+version namespace. The highest numeric stable version supplies the next bump.
+The first successful allocation for a commit wins: retrying that SHA reuses its
+highest stable tag, even if the manual bump input changes.
+
+All callers of the tagger share the repository-scoped `reusable-release-tags`
+job concurrency group. Automatic merges, manual runs, and retries wait rather
+than cancel one another. Do not put a caller workflow in that same group:
+the outer workflow would hold the lock needed by the tagger. Each eligible
+distinct SHA gets a version in allocation order. GitHub orders queued jobs by
+when they start waiting, so this does not guarantee chronological merge order
+or publication completion order.
+
+[`queue: max`](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
+retains up to 100 pending jobs. Runs beyond that limit are canceled by GitHub;
+rerun them after the queue drains. Each tagger job has a ten-minute timeout.
+Tags are refreshed after queue entry and before each retry. Competing tag pushes
+are retried up to five attempts with bounded backoff, without overwriting remote
+tags; other push failures stop immediately. After a failed or canceled run,
+rerun the original workflow so it preserves its target SHA. If a tag was already
+pushed, the existing tag is reused and the dependent publisher can recover.
+
+The lint command validates `concurrency.queue` separately because pinned
+[actionlint 1.7.12 does not yet recognize it](https://github.com/rhysd/actionlint/issues/657).
+It excludes only that exact unknown-key diagnostic after validating the queue
+value and rejecting cancellation with `queue: max`. All other actionlint and
+ShellCheck failures still fail the job. Remove this compatibility check when an
+upstream release supports the syntax.
+
 Local validation (Python with `yamllint`/PyYAML, Node.js, `actionlint` 1.7.12,
 and ShellCheck 0.11.0 on PATH):
 
 ```sh
-actionlint
+python scripts/lint_workflows.py
 yamllint .
 python -m unittest discover -s tests -v
 ```

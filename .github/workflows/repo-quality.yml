@@ -25,9 +25,6 @@ jobs:
             actionlint 1.7.12
             shellcheck 0.11.0
 
-      - name: Run actionlint
-        run: actionlint
-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
@@ -35,6 +32,9 @@ jobs:
 
       - name: Install yamllint
         run: python -m pip install --disable-pip-version-check yamllint==1.37.1
+
+      - name: Run actionlint
+        run: python scripts/lint_workflows.py
 
       - name: Lint YAML
         run: yamllint .
